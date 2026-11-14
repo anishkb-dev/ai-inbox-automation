@@ -1,0 +1,141 @@
+{
+  "name": "AI inbox triage (template)",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "nothing",
+        "format": "simple",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]"
+        }
+      },
+      "id": "7a1c0e2e-0001-4b6f-9a10-000000000001",
+      "name": "Read unread email (IMAP)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "imap": {
+          "id": "",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: 'You triage a small business inbox. Reply with JSON with keys: category (one of: sales lead, support, invoice/billing, spam, other), urgency (high, medium, low), name, company, request (one sentence), summary (one sentence), reply (short polite draft; do not promise prices, dates or refunds; empty for spam).' }, { role: 'user', content: 'From: ' + $json.from + '\\nSubject: ' + $json.subject + '\\n\\n' + ($json.textPlain || $json.textHtml || '').slice(0, 6000) } ] }) }}",
+        "options": {}
+      },
+      "id": "7a1c0e2e-0002-4b6f-9a10-000000000002",
+      "name": "Classify + draft reply (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        260,
+        0
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "",
+          "name": "LLM API key (Authorization: Bearer ...)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const mails = $('Read unread email (IMAP)').all();\nconst CATS = ['sales lead', 'support', 'invoice/billing', 'spam', 'other'];\nreturn $input.all().map((item, i) => {\n  let ai = {};\n  try { ai = JSON.parse(item.json.choices[0].message.content); } catch (e) {}\n  const m = mails[i].json;\n  const category = CATS.includes(String(ai.category).toLowerCase()) ? String(ai.category).toLowerCase() : 'other';\n  const urgency = ['high', 'medium', 'low'].includes(String(ai.urgency).toLowerCase()) ? String(ai.urgency).toLowerCase() : 'medium';\n  return { json: {\n    date: m.date, from: m.from, subject: m.subject, category, urgency,\n    name: ai.name || '', company: ai.company || '', request: ai.request || '', summary: ai.summary || '',\n    'draft reply (not sent)': category === 'spam' ? '' : (ai.reply || ''),\n  } };\n});"
+      },
+      "id": "7a1c0e2e-0003-4b6f-9a10-000000000003",
+      "name": "Parse + validate JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Inbox"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "7a1c0e2e-0004-4b6f-9a10-000000000004",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        780,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Read unread email (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Classify + draft reply (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify + draft reply (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Parse + validate JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + validate JSON": {
+      "main": [
+        [
+          {
+            "node": "Log to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
